@@ -1,0 +1,75 @@
+{
+  "name": "rust-fmt",
+  "displayName": "rust fmt",
+  "description": "Format Rust code using cargo fmt",
+  "version": "0.1.0",
+  "publisher": "rust-fmt",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "keywords": [
+    "rust",
+    "rustfmt",
+    "cargo fmt",
+    "formatter"
+  ],
+  "activationEvents": [
+    "onLanguage:rust"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "rust",
+        "extensions": [".rs"]
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Rust Formatter",
+      "properties": {
+        "rustfmt.path": {
+          "type": "string",
+          "default": "rustfmt",
+          "description": "Path to rustfmt executable"
+        },
+        "rustfmt.formatOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Format Rust files on save"
+        },
+        "rustfmt.extraArgs": {
+          "type": "array",
+          "default": [],
+          "description": "Additional arguments for rustfmt",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "rust-fmt.format",
+        "title": "Format Document with rustfmt"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
