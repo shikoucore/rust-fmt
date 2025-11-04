@@ -3,7 +3,8 @@
   "displayName": "rust fmt",
   "description": "Format Rust code using cargo fmt",
   "version": "0.1.0",
-  "publisher": "rust-fmt",
+  "publisher": "vremyavnikuda",
+  "icon": "assets/icon_rust_fmt.png",
   "engines": {
     "vscode": "^1.80.0"
   },
