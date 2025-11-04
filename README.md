@@ -2,6 +2,8 @@
 
 Simple VS Code extension for formatting Rust code using `rustfmt`.
 
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=vremyavnikuda.rust-fmt)
+
 ## Requirements
 
 You need `rustfmt` installed. Install it via:
