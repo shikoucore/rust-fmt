@@ -34,6 +34,23 @@ export class RustFormatter {
 
             let stdout = '';
             let stderr = '';
+            let settled = false;
+            const timeoutMs = 10000;
+
+            const finish = (result: string | null) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                clearTimeout(timeout);
+                resolve(result);
+            };
+
+            const timeout = setTimeout(() => {
+                console.error('[rust-fmt] Timeout: rustfmt took too long, killing process');
+                rustfmt.kill();
+                finish(null);
+            }, timeoutMs);
 
             rustfmt.stdout.on('data', (data) => {
                 stdout += data.toString();
@@ -46,7 +63,7 @@ export class RustFormatter {
             rustfmt.on('error', (err) => {
                 console.error('[rust-fmt] Error:', err);
                 vscode.window.showErrorMessage(`Failed to run rustfmt: ${err.message}`);
-                resolve(null);
+                finish(null);
             });
 
             rustfmt.on('close', (code) => {
@@ -58,14 +75,14 @@ export class RustFormatter {
                 if (code === 0) {
                     if (!stdout || stdout.trim() === '') {
                         console.log('[rust-fmt] Warning: empty output from rustfmt');
-                        resolve(null);
+                        finish(null);
                     } else {
                         console.log(`[rust-fmt] Successfully formatted, output length: ${stdout.length}`);
-                        resolve(stdout);
+                        finish(stdout);
                     }
                 } else {
                     vscode.window.showErrorMessage(`rustfmt exited with code ${code}: ${stderr}`);
-                    resolve(null);
+                    finish(null);
                 }
             });
 
