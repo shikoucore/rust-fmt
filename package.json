@@ -6,7 +6,7 @@
   "publisher": "vremyavnikuda",
   "icon": "assets/icon_rust_fmt.png",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.108.0"
   },
   "categories": [
     "Formatters"
