@@ -1,12 +1,12 @@
 {
   "name": "rust-fmt",
   "displayName": "rust fmt",
-  "description": "Format Rust code using cargo fmt",
-  "version": "0.1.0",
+  "description": "Format Rust code using rustfmt",
+  "version": "0.1.1",
   "publisher": "vremyavnikuda",
   "icon": "assets/icon_rust_fmt.png",
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.108.0"
   },
   "categories": [
     "Formatters"
@@ -25,7 +25,9 @@
     "languages": [
       {
         "id": "rust",
-        "extensions": [".rs"]
+        "extensions": [
+          ".rs"
+        ]
       }
     ],
     "configuration": {
@@ -36,11 +38,6 @@
           "type": "string",
           "default": "rustfmt",
           "description": "Path to rustfmt executable"
-        },
-        "rustfmt.formatOnSave": {
-          "type": "boolean",
-          "default": true,
-          "description": "Format Rust files on save"
         },
         "rustfmt.extraArgs": {
           "type": "array",
@@ -56,6 +53,18 @@
       {
         "command": "rust-fmt.format",
         "title": "Format Document with rustfmt"
+      },
+      {
+        "command": "rust-fmt.formatWorkspace",
+        "title": "Format Workspace with rustfmt"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "rust-fmt.formatWorkspace",
+        "key": "shift+alt+f",
+        "mac": "shift+option+f",
+        "when": "editorTextFocus && editorLangId == rust"
       }
     ]
   },
@@ -67,7 +76,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.80.0",
+    "@types/vscode": "^1.108.1",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.0.0",
