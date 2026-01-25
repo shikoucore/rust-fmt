@@ -2,7 +2,7 @@
   "name": "rust-fmt",
   "displayName": "rust fmt",
   "description": "Format Rust code using rustfmt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "vremyavnikuda",
   "icon": "assets/icon_rust_fmt.png",
   "engines": {
