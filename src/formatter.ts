@@ -1,9 +1,18 @@
 import * as cp from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 export interface FormatterConfig {
     rustfmtPath: string;
     extraArgs: string[];
+}
+
+interface RustfmtContext {
+    cwd: string | undefined;
+    configPath?: string;
+    edition?: string;
+    toolchain?: string;
 }
 
 export class RustFormatter {
@@ -13,29 +22,55 @@ export class RustFormatter {
         this.config = config;
     }
 
-    public async format(document: vscode.TextDocument): Promise<string | null> {
-        const text = document.getText();
+    public async format(
+        document: vscode.TextDocument,
+        token?: vscode.CancellationToken,
+        textOverride?: string
+    ): Promise<string | null> {
+        const text = textOverride ?? document.getText();
+        const filePath = document.uri.fsPath;
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-        
-        return this.formatWithRustfmt(text, workspaceFolder);
+        const context = await resolveRustfmtContext(filePath, workspaceFolder);
+
+        return this.formatWithRustfmt(text, context, token);
     }
 
-    private async formatWithRustfmt(text: string, cwd: string | undefined): Promise<string | null> {
+    private async formatWithRustfmt(
+        text: string,
+        context: RustfmtContext,
+        token?: vscode.CancellationToken
+    ): Promise<string | null> {
         console.log(`[rust-fmt] Formatting with rustfmt at: ${this.config.rustfmtPath}`);
+
+        if (token?.isCancellationRequested) {
+            return null;
+        }
         
         return new Promise((resolve) => {
-            const args = ['--emit', 'stdout', ...this.config.extraArgs];
+            const args = buildRustfmtArgs(this.config.extraArgs, context);
             console.log(`[rust-fmt] Running: ${this.config.rustfmtPath} ${args.join(' ')}`);
-            
+
+            const env = { ...process.env };
+            if (context.toolchain && !env.RUSTUP_TOOLCHAIN) {
+                env.RUSTUP_TOOLCHAIN = context.toolchain;
+                console.log(`[rust-fmt] Using toolchain override: ${context.toolchain}`);
+            }
+
             const rustfmt = cp.spawn(this.config.rustfmtPath, args, {
-                cwd: cwd,
-                shell: false
+                cwd: context.cwd,
+                shell: false,
+                env
             });
 
             let stdout = '';
             let stderr = '';
             let settled = false;
             const timeoutMs = 10000;
+            const cancelSubscription = token?.onCancellationRequested(() => {
+                console.warn('[rust-fmt] Formatting canceled, killing rustfmt process');
+                rustfmt.kill();
+                finish(null);
+            });
 
             const finish = (result: string | null) => {
                 if (settled) {
@@ -43,6 +78,7 @@ export class RustFormatter {
                 }
                 settled = true;
                 clearTimeout(timeout);
+                cancelSubscription?.dispose();
                 resolve(result);
             };
 
@@ -61,12 +97,18 @@ export class RustFormatter {
             });
 
             rustfmt.on('error', (err) => {
+                if (settled) {
+                    return;
+                }
                 console.error('[rust-fmt] Error:', err);
                 vscode.window.showErrorMessage(`Failed to run rustfmt: ${err.message}`);
                 finish(null);
             });
 
             rustfmt.on('close', (code) => {
+                if (settled) {
+                    return;
+                }
                 console.log(`[rust-fmt] Process exited with code: ${code}`);
                 if (stderr) {
                     console.log(`[rust-fmt] stderr: ${stderr}`);
@@ -86,6 +128,11 @@ export class RustFormatter {
                 }
             });
 
+            if (token?.isCancellationRequested) {
+                finish(null);
+                return;
+            }
+
             rustfmt.stdin.write(text);
             rustfmt.stdin.end();
         });
@@ -94,4 +141,116 @@ export class RustFormatter {
     public updateConfig(config: FormatterConfig): void {
         this.config = config;
     }
+}
+
+function buildRustfmtArgs(extraArgs: string[], context: RustfmtContext): string[] {
+    const args: string[] = ['--emit', 'stdout'];
+    const normalizedExtraArgs = extraArgs ?? [];
+
+    if (context.configPath && !hasArg(normalizedExtraArgs, '--config-path')) {
+        args.push('--config-path', context.configPath);
+    }
+
+    if (context.edition && !hasArg(normalizedExtraArgs, '--edition')) {
+        args.push('--edition', context.edition);
+    }
+
+    args.push(...normalizedExtraArgs);
+    return args;
+}
+
+function hasArg(args: string[], name: string): boolean {
+    return args.some((arg) => arg === name || arg.startsWith(`${name}=`));
+}
+
+async function resolveRustfmtContext(filePath: string, workspaceFolder?: string): Promise<RustfmtContext> {
+    const fileDir = path.dirname(filePath);
+    const cargoTomlPath = await findNearestFile(fileDir, ['Cargo.toml'], workspaceFolder);
+    const crateRoot = cargoTomlPath ? path.dirname(cargoTomlPath) : workspaceFolder;
+    const configPath = await findNearestFile(fileDir, ['rustfmt.toml', '.rustfmt.toml'], workspaceFolder);
+    const toolchainPath = await findNearestFile(
+        fileDir,
+        ['rust-toolchain.toml', 'rust-toolchain'],
+        workspaceFolder
+    );
+    const edition = cargoTomlPath ? await readEditionFromCargoToml(cargoTomlPath) : undefined;
+    const toolchain = toolchainPath ? await readToolchainFromFile(toolchainPath) : undefined;
+
+    return {
+        cwd: crateRoot ?? workspaceFolder ?? fileDir,
+        configPath: configPath ?? undefined,
+        edition,
+        toolchain
+    };
+}
+
+async function findNearestFile(
+    startDir: string,
+    candidateNames: string[],
+    stopDir?: string
+): Promise<string | null> {
+    let current = path.resolve(startDir);
+    const stop = stopDir ? path.resolve(stopDir) : undefined;
+    const stopNormalized = stop ? normalizePath(stop) : undefined;
+
+    while (true) {
+        for (const name of candidateNames) {
+            const candidate = path.join(current, name);
+            try {
+                await fs.promises.access(candidate, fs.constants.F_OK);
+                return candidate;
+            } catch {
+                // Not found in this directory.
+            }
+        }
+
+        if (stopNormalized && normalizePath(current) === stopNormalized) {
+            break;
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+            break;
+        }
+        current = parent;
+    }
+
+    return null;
+}
+
+async function readEditionFromCargoToml(cargoTomlPath: string): Promise<string | undefined> {
+    try {
+        const contents = await fs.promises.readFile(cargoTomlPath, 'utf8');
+        const match = contents.match(/^\s*edition\s*=\s*["'](\d{4})["']\s*(#.*)?$/m);
+        return match?.[1];
+    } catch {
+        return undefined;
+    }
+}
+
+async function readToolchainFromFile(toolchainPath: string): Promise<string | undefined> {
+    try {
+        const contents = await fs.promises.readFile(toolchainPath, 'utf8');
+        const channelMatch = contents.match(/^\s*channel\s*=\s*["']([^"']+)["']\s*(#.*)?$/m);
+        if (channelMatch?.[1]) {
+            return channelMatch[1];
+        }
+
+        const lines = contents.split(/\r?\n/);
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('#')) {
+                continue;
+            }
+            return trimmed.replace(/^["']|["']$/g, '');
+        }
+
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function normalizePath(value: string): string {
+    return process.platform === 'win32' ? value.toLowerCase() : value;
 }

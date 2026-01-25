@@ -53,6 +53,18 @@
       {
         "command": "rust-fmt.format",
         "title": "Format Document with rustfmt"
+      },
+      {
+        "command": "rust-fmt.formatWorkspace",
+        "title": "Format Workspace with rustfmt"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "rust-fmt.formatWorkspace",
+        "key": "shift+alt+f",
+        "mac": "shift+option+f",
+        "when": "editorTextFocus && editorLangId == rust"
       }
     ]
   },
