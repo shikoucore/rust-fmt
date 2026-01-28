@@ -1,0 +1,11 @@
+.github/**
+out/**/*.map
+src/**
+test/**
+test-rs/**
+.vscode/**
+.editorconfig
+.eslintrc.cjs
+.gitignore
+package-lock.json
+tsconfig.json
