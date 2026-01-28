@@ -205,7 +205,8 @@ async function findNearestFile(
     const stop = stopDir ? path.resolve(stopDir) : undefined;
     const stopNormalized = stop ? normalizePath(stop) : undefined;
 
-    while (true) {
+    let done = false;
+    while (!done) {
         for (const name of candidateNames) {
             const candidate = path.join(current, name);
             try {
@@ -217,12 +218,14 @@ async function findNearestFile(
         }
 
         if (stopNormalized && normalizePath(current) === stopNormalized) {
-            break;
+            done = true;
+            continue;
         }
 
         const parent = path.dirname(current);
         if (parent === current) {
-            break;
+            done = true;
+            continue;
         }
         current = parent;
     }
