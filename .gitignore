@@ -3,3 +3,4 @@ out
 *.vsix
 sample-rust
 TASKS.md
+test-rs

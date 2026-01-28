@@ -8,7 +8,7 @@ export interface FormatterConfig {
     extraArgs: string[];
 }
 
-interface RustfmtContext {
+export interface RustfmtContext {
     cwd: string | undefined;
     configPath?: string;
     edition?: string;
@@ -30,9 +30,21 @@ export class RustFormatter {
         const text = textOverride ?? document.getText();
         const filePath = document.uri.fsPath;
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
-        const context = await resolveRustfmtContext(filePath, workspaceFolder);
+        const context = await this.resolveContext(filePath, workspaceFolder);
 
         return this.formatWithRustfmt(text, context, token);
+    }
+
+    public async formatWithContext(
+        text: string,
+        context: RustfmtContext,
+        token?: vscode.CancellationToken
+    ): Promise<string | null> {
+        return this.formatWithRustfmt(text, context, token);
+    }
+
+    public async resolveContext(filePath: string, workspaceFolder?: string): Promise<RustfmtContext> {
+        return resolveRustfmtContext(filePath, workspaceFolder);
     }
 
     private async formatWithRustfmt(

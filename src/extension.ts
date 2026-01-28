@@ -1,5 +1,6 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { RustFormatter, FormatterConfig } from './formatter';
+import { RustFormatter, FormatterConfig, RustfmtContext } from './formatter';
 
 let formatter: RustFormatter;
 const activeFormats = new Map<string, { tokenSource: vscode.CancellationTokenSource; promise: Promise<vscode.TextEdit[]> }>();
@@ -64,6 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
                 let skipped = 0;
                 let failed = 0;
                 let processed = 0;
+                const contextCache = new Map<string, RustfmtContext>();
 
                 for (const uri of uris) {
                     if (token.isCancellationRequested) {
@@ -75,7 +77,14 @@ export function activate(context: vscode.ExtensionContext) {
 
                     try {
                         const document = await vscode.workspace.openTextDocument(uri);
-                        const edits = await formatDocument(document, token);
+                        const dirKey = path.dirname(document.uri.fsPath);
+                        let resolvedContext = contextCache.get(dirKey);
+                        if (!resolvedContext) {
+                            const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath;
+                            resolvedContext = await formatter.resolveContext(document.uri.fsPath, workspaceFolder);
+                            contextCache.set(dirKey, resolvedContext);
+                        }
+                        const edits = await formatDocument(document, token, resolvedContext);
                         if (edits.length > 0) {
                             const edit = new vscode.WorkspaceEdit();
                             edit.set(uri, edits);
@@ -136,7 +145,11 @@ export function activate(context: vscode.ExtensionContext) {
     );
 }
 
-async function formatDocument(document: vscode.TextDocument, token?: vscode.CancellationToken): Promise<vscode.TextEdit[]> {
+async function formatDocument(
+    document: vscode.TextDocument,
+    token?: vscode.CancellationToken,
+    resolvedContext?: RustfmtContext
+): Promise<vscode.TextEdit[]> {
     const key = document.uri.toString();
     const existing = activeFormats.get(key);
     if (existing) {
@@ -151,7 +164,7 @@ async function formatDocument(document: vscode.TextDocument, token?: vscode.Canc
     const tokenSource = new vscode.CancellationTokenSource();
     const externalCancellation = token?.onCancellationRequested(() => tokenSource.cancel());
 
-    const promise = performFormat(document, tokenSource.token).finally(() => {
+    const promise = performFormat(document, tokenSource.token, resolvedContext).finally(() => {
         const current = activeFormats.get(key);
         if (current?.promise === promise) {
             activeFormats.delete(key);
@@ -164,7 +177,11 @@ async function formatDocument(document: vscode.TextDocument, token?: vscode.Canc
     return promise;
 }
 
-async function performFormat(document: vscode.TextDocument, token: vscode.CancellationToken): Promise<vscode.TextEdit[]> {
+async function performFormat(
+    document: vscode.TextDocument,
+    token: vscode.CancellationToken,
+    resolvedContext?: RustfmtContext
+): Promise<vscode.TextEdit[]> {
     console.log(`[rust-fmt] Formatting document: ${document.uri.fsPath}`);
 
     if (token.isCancellationRequested) {
@@ -182,7 +199,9 @@ async function performFormat(document: vscode.TextDocument, token: vscode.Cancel
         return [];
     }
 
-    const formattedText = await formatter.format(document, token, originalText);
+    const formattedText = resolvedContext
+        ? await formatter.formatWithContext(originalText, resolvedContext, token)
+        : await formatter.format(document, token, originalText);
 
     if (token.isCancellationRequested) {
         return [];
