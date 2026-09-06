@@ -71,19 +71,24 @@ The macro formatter is a plain stdin-to-stdout filter, so no plugin is needed.
 Linux and macOS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vremyavnikuda/rust-fmt/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/vremyavnikuda/rust-fmt/main/install.py | python3 -
 ```
 
 Windows, in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/vremyavnikuda/rust-fmt/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/vremyavnikuda/rust-fmt/main/install.py | python -
 ```
 
-Both put the binary in `~/.local/bin`, check its SHA-256 against the one
-published with the release, and tell you what to add to your shell config if
-that directory is not on your `PATH`. `RUSTFMT_MF_VERSION=v0.1.14` pins a
-release, `RUSTFMT_MF_BIN_DIR` installs somewhere else.
+One script for all three systems. It needs Python 3.8 or newer, which most
+Linux installs already have and which macOS and Windows get from
+[python.org](https://www.python.org/downloads/) or their package manager.
+
+The binary goes in `~/.local/bin` and its SHA-256 is checked against the one
+published with the release. On Linux and macOS the script prints the line to
+add to your shell config; on Windows it adds the directory to your user `PATH`
+itself, so open a new terminal afterwards. `RUSTFMT_MF_VERSION` pins a release
+instead of the latest, `RUSTFMT_MF_BIN_DIR` installs somewhere else.
 
 <details>
 <summary>Without the script</summary>

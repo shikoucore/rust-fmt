@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `rustfmt.compactBlankLines` setting, and `--compact-blank-lines` for the standalone binary. Off by default; on, it strips blank lines inside braces to keep large files short.
-- One-line install of the standalone binary for Vim and Neovim: `curl -fsSL .../install.sh | sh` on Linux and macOS, `irm .../install.ps1 | iex` on Windows. Puts `rust-fmt-mf` in `~/.local/bin`, checks its SHA-256 against the release, and tells you what to add to your shell config if that directory is not on your `PATH`.
+- One-line install of the standalone binary for Vim and Neovim: `curl -fsSL .../install.py | python3 -` on Linux and macOS, `irm .../install.py | python -` on Windows. One script for all three systems, needing Python 3.8 or newer. Puts `rust-fmt-mf` in `~/.local/bin` and checks its SHA-256 against the release; prints the line to add to your shell config on Linux and macOS, and adds the directory to your user `PATH` on Windows. `RUSTFMT_MF_VERSION` pins a release, `RUSTFMT_MF_BIN_DIR` installs elsewhere.
 
 ### Fixed
 
