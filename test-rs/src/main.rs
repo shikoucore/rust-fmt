@@ -1,5 +1,8 @@
 mod examples;
 
+use std::collections::HashMap;
+use std::fmt::Write;
+
 fn main() {
     let x = 1 + 2 * 3;
     println!("Hello, world!");
@@ -25,6 +28,9 @@ fn main() {
         };
     }
     messy!(5);
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    counts.insert("messy", 1);
+    println!("{}", summarize(&counts));
 }
 
 fn add(a: i32, b: i32) -> i32 {
@@ -40,4 +46,14 @@ impl Point {
     pub fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
+}
+
+fn summarize(counts: &HashMap<&str, usize>) -> String {
+    let mut names: Vec<&&str> = counts.keys().collect();
+    names.sort();
+    let mut out = String::new();
+    for name in names {
+        let _ = write!(out, "{}={};", name, counts[name]);
+    }
+    out
 }

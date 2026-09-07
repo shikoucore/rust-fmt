@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::io::{self, Read, Write};
+use std::process::ExitCode;
 
 #[derive(Parser)]
 #[command(name = "rust-fmt-mf")]
@@ -23,12 +24,34 @@ struct Cli {
     compact_blank_lines: bool,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut source = String::new();
-    io::stdin().read_to_string(&mut source)?;
+    if let Err(error) = io::stdin().read_to_string(&mut source) {
+        eprintln!("rust-fmt-mf\tERROR\tcannot read stdin: {error}");
+        return ExitCode::FAILURE;
+    }
+    match format(&source, &cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            // A filter that cannot format still has to hand back what it was
+            // given. Vim's `formatprg` replaces the filtered range with this
+            // process's stdout, so exiting with nothing written would delete
+            // the user's code; the editor extension keys off the non-zero
+            // status instead and falls back to plain rustfmt.
+            eprintln!(
+                "rust-fmt-mf\tERROR\t{}",
+                format!("{error:#}").replace(['\r', '\n', '\t'], " ")
+            );
+            let _ = io::stdout().write_all(source.as_bytes());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn format(source: &str, cli: &Cli) -> anyhow::Result<()> {
     let result = rust_fmt_mf::format_source_with_report_and_options(
-        &source,
+        source,
         &cli.rustfmt_path,
         &cli.edition,
         cli.config_path.as_deref(),
@@ -59,6 +82,8 @@ fn main() -> anyhow::Result<()> {
             status, outcome.name, outcome.span.start, outcome.span.end
         )?;
     }
+    // Written last, so any failure above leaves stdout untouched for `main`
+    // to fill with the original source.
     io::stdout().write_all(result.text.as_bytes())?;
     Ok(())
 }

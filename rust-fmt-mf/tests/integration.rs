@@ -1040,3 +1040,141 @@ fn f() {
     // Compaction is about removing blank lines, never about adding them.
     assert_eq!(format_compact(source), source);
 }
+
+
+#[test]
+fn unsorted_imports_and_mods_do_not_abort_the_file() {
+    // `reorder_imports` and `reorder_modules` are on by default, so plain
+    // rustfmt legitimately moves these past each other. Comparing the token
+    // *sequence* across that pass treated it as corruption and failed the
+    // whole file -- on the ordinary state of a file nobody has formatted.
+    let source = "mod zebra;
+mod alpha;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
+macro_rules! pair {
+    ($a:expr) => { Mutex::new($a) };
+}
+";
+    let actual = rust_fmt_mf::format_source(source, "rustfmt", "2021", None).unwrap();
+    assert!(
+        actual.find("alpha").unwrap() < actual.find("zebra").unwrap(),
+        "rustfmt must be allowed to reorder the mods: {actual:?}"
+    );
+    assert!(
+        actual.find("collections").unwrap() < actual.find("sync").unwrap(),
+        "rustfmt must be allowed to reorder the imports: {actual:?}"
+    );
+    assert!(actual.contains("macro_rules! pair"), "{actual:?}");
+}
+
+fn run_binary(source: &str) -> (bool, String, String) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rust-fmt-mf"))
+        .args(["--edition", "2021"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn a_file_it_cannot_format_comes_back_unchanged() {
+    // Vim's `formatprg` replaces the filtered range with this process's
+    // stdout, so failing with nothing written deletes the user's code. The
+    // status stays non-zero: that is what the editor extension keys off to
+    // fall back to plain rustfmt.
+    let source = "macro_rules! broken { ($x:expr) => { \n";
+    let (ok, stdout, stderr) = run_binary(source);
+    assert!(!ok, "this input must be reported as a failure");
+    assert_eq!(stdout, source, "the original source must come back verbatim");
+    assert!(stderr.contains("ERROR"), "{stderr:?}");
+}
+
+#[test]
+fn mixed_line_endings_never_rewrite_a_string_literal() {
+    // A file whose endings are mixed used to be normalized to LF and then
+    // restored with a blanket `\n` -> `\r\n`, which turned the real newline
+    // inside an LF-only literal into a CRLF and changed the string's value.
+    let source = "const A: &str = \"crlf:\r\nline\";\nconst B: &str = \"lf-only:\nline\";\nmacro_rules! m { () => { let _ = 1; }; }\n";
+    let (_, stdout, _) = run_binary(source);
+    assert!(
+        stdout.contains("\"lf-only:\nline\""),
+        "the LF inside the literal must survive: {stdout:?}"
+    );
+    assert!(
+        !stdout.contains("\"lf-only:\r\nline\""),
+        "the literal was rewritten to CRLF: {stdout:?}"
+    );
+}
+
+
+#[test]
+fn a_macro_body_formats_the_same_however_it_was_laid_out() {
+    // `normalize_body_indent` only re-indents, so a body that arrived with
+    // the attribute glued to the item, or with the `{` glued to the last
+    // where-bound, kept them: the same macro then formatted one way from a
+    // tidy source and another way from an untidy one, and both results were
+    // stable, so neither converged to the other.
+    let canonical = "macro_rules! m {
+    (#[$meta:meta] $vis:vis struct $name:ident) => {
+        #[$meta]
+        $vis struct $name
+        where
+            u8: Clone
+        {
+            pub x: u8,
+        }
+    };
+}
+";
+    let untidy = "macro_rules! m {
+    (#[$meta:meta] $vis:vis struct $name:ident) => {
+        #[$meta] $vis struct $name
+        where
+        u8: Clone {
+        pub x: u8 }
+    };
+}
+";
+    let from_canonical = rust_fmt_mf::format_source(canonical, "rustfmt", "2021", None).unwrap();
+    let from_untidy = rust_fmt_mf::format_source(untidy, "rustfmt", "2021", None).unwrap();
+    assert_eq!(from_canonical, canonical, "the canonical layout must be a fixed point");
+    assert_eq!(
+        from_untidy, canonical,
+        "an untidy body must reach the same layout, not a second fixed point"
+    );
+}
+
+#[test]
+fn an_attribute_keeps_its_own_line_in_a_macro_body() {
+    // The golden fixture struct_with_bounds.expected pins this: rustfmt never
+    // leaves `#[attr]` on the same line as the item it applies to, and macro
+    // bodies are formatted like ordinary code.
+    let source = "macro_rules! m {
+    ($vis:vis struct $name:ident) => {
+        #[derive(Debug)] $vis struct $name {
+            pub x: u8,
+        }
+    };
+}
+";
+    let actual = rust_fmt_mf::format_source(source, "rustfmt", "2021", None).unwrap();
+    assert!(
+        actual.contains("        #[derive(Debug)]\n"),
+        "the attribute must be on its own line: {actual:?}"
+    );
+}

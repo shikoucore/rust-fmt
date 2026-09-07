@@ -931,3 +931,29 @@ fn build() -> TokenStream {
         vec!["real"]
     );
 }
+
+#[test]
+fn uniform_crlf_is_distinguished_from_a_mixed_file() {
+    assert!(super::is_uniform_crlf("a\r\nb\r\n"));
+    assert!(!super::is_uniform_crlf("a\nb\n"));
+    assert!(!super::is_uniform_crlf(""));
+    // One CRLF among LF endings must not switch the whole file into the
+    // normalize/restore round trip: restoring turns every `\n` back into
+    // `\r\n`, including a real newline inside a string literal, which
+    // changes that string's value.
+    assert!(!super::is_uniform_crlf("a\r\nb\nc\n"));
+}
+
+#[test]
+fn the_whole_file_oracle_allows_reordering_but_not_invention() {
+    let before = "use std::sync::Mutex;\nuse std::collections::HashMap;\n";
+    // rustfmt's `reorder_imports` is on by default, so this is the ordinary
+    // outcome for any file nobody has formatted yet, not corruption.
+    let reordered = "use std::collections::HashMap;\nuse std::sync::Mutex;\n";
+    assert!(super::ensure_tokens_preserved_across_rustfmt_pass(before, reordered).is_ok());
+    // Losing or inventing a token is still refused.
+    let dropped = "use std::sync::Mutex;\n";
+    assert!(super::ensure_tokens_preserved_across_rustfmt_pass(before, dropped).is_err());
+    let renamed = "use std::sync::RwLock;\nuse std::collections::HashMap;\n";
+    assert!(super::ensure_tokens_preserved_across_rustfmt_pass(before, renamed).is_err());
+}

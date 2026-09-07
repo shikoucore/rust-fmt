@@ -3,8 +3,8 @@ out
 *.vsix
 img
 test-rs/target
-todo.md
 /rust-fmt-mf/target
 .vscode-test
 __pycache__/
 .worktrees/
+task.md

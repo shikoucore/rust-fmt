@@ -15,7 +15,7 @@ use crate::replacer::replace_macro_syntax_text;
 use crate::shadow::build_shadow_file_from_strings;
 use crate::types::{FormatOptions, FormatResult, MacroOutcome, MacroStatus, Mapping};
 use ra_ap_rustc_lexer::{tokenize, FrontmatterAllowed, TokenKind};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 fn try_format_as_mod(
@@ -194,14 +194,93 @@ fn is_rep_closer(s: &str) -> bool {
     matches!(after_sep, "+" | "*" | "?")
 }
 
+/// The byte after a leading `#[...]` or `#![...]`, or `None` when the line
+/// does not start with an attribute. Brackets nest and a string inside the
+/// attribute may hold a `]`, so the scan tracks both.
+fn attribute_end(line: &str) -> Option<usize> {
+    let start = if line.starts_with("#![") {
+        3
+    } else if line.starts_with("#[") {
+        2
+    } else {
+        return None;
+    };
+    let bytes = line.as_bytes();
+    let mut depth = 1usize;
+    let mut index = start;
+    let mut in_string = false;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if in_string => index += 1,
+            b'"' => in_string = !in_string,
+            b'[' if !in_string => depth += 1,
+            b']' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index + 1);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Split the two joins rustfmt never leaves in an item header: an attribute
+/// keeps its own line, and so does the `{` that opens a body after a `where`
+/// clause.
+///
+/// `normalize_body_indent` only re-indents, so a body that arrives with these
+/// already joined keeps them, and the very same macro then formats one way
+/// from a tidy source and another way from an untidy one. A single-line body
+/// never reaches here -- rustfmt lays that one out from scratch -- which is
+/// why the two disagreed.
+fn split_item_header_lines(lines: &[&str]) -> Vec<String> {
+    let mut result = Vec::with_capacity(lines.len());
+    let mut in_where = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "where" {
+            in_where = true;
+            result.push(trimmed.to_string());
+            continue;
+        }
+        let mut rest = trimmed;
+        while let Some(end) = attribute_end(rest) {
+            let (attribute, tail) = rest.split_at(end);
+            let tail = tail.trim_start();
+            if tail.is_empty() {
+                break;
+            }
+            result.push(attribute.trim_end().to_string());
+            rest = tail;
+        }
+        // Only the line that closes the `where` clause is split: `{` alone,
+        // or a body opened without a `where`, is already where rustfmt puts it.
+        if in_where && rest.len() > 1 && rest.ends_with('{') {
+            result.push(rest[..rest.len() - 1].trim_end().to_string());
+            result.push("{".to_string());
+            in_where = false;
+            continue;
+        }
+        if rest.ends_with('{') {
+            in_where = false;
+        }
+        result.push(rest.to_string());
+    }
+    result
+}
+
 fn normalize_body_indent(body: &str) -> String {
     const BASE_INDENT: usize = 4;
     const UNIT: usize = 4;
 
-    let lines: Vec<&str> = body.lines().collect();
-    if lines.len() <= 1 {
+    let source_lines: Vec<&str> = body.lines().collect();
+    if source_lines.len() <= 1 {
         return body.to_string();
     }
+    let lines = split_item_header_lines(&source_lines);
     let mut result = Vec::with_capacity(lines.len());
     let mut depth = 0usize;
     let mut in_where = false;
@@ -1436,6 +1515,15 @@ pub fn format_source_with_options(
     )
 }
 
+/// Whether every line ending in `source` is a CRLF, and there is at least
+/// one. A file that mixes CRLF and LF answers `false`: the round trip in
+/// `format_source_with_report_and_options` can only put back what it can
+/// assume about every newline.
+fn is_uniform_crlf(source: &str) -> bool {
+    let newlines = source.bytes().filter(|&byte| byte == b'\n').count();
+    newlines > 0 && source.matches("\r\n").count() == newlines
+}
+
 /// Remap a byte span computed against `lf_text` (line endings already
 /// normalized to `\n`) back to the equivalent span in the original text
 /// that had `\r\n` at every one of those newlines. Each `\n` at or before
@@ -1472,7 +1560,14 @@ pub fn format_source_with_report_and_options(
     config_path: Option<&str>,
     options: FormatOptions,
 ) -> anyhow::Result<FormatResult> {
-    if !source.contains("\r\n") {
+    // Only when *every* newline is a CRLF. The restore below turns each `\n`
+    // back into `\r\n` unconditionally, so on a file that mixes endings it
+    // would rewrite the LF ones too -- including a real newline inside a
+    // string literal, which silently changes that string's value. A mixed
+    // file goes through untouched instead: worst case rustfmt's own line
+    // endings trip the oracle and the file is left alone, which is the right
+    // trade against corrupting a literal.
+    if !is_uniform_crlf(source) {
         return format_source_with_report_impl(source, rustfmt_path, edition, config_path, options);
     }
     // rustfmt (and this crate's own shadow-file processing) silently drops
@@ -1560,23 +1655,68 @@ fn format_source_with_report_impl(
 /// braces of `move || { $body }` changes what the macro expands to, and
 /// this oracle is the only thing standing between that and the user's file.
 fn ensure_tokens_preserved(before: &str, after: &str) -> anyhow::Result<()> {
-    compare_tokens(before, after, false)
+    compare_tokens(before, after)
 }
 
 /// The same check for a whole-file pass of plain rustfmt over real code,
-/// where removals are legitimate: a single-expression `match` arm loses its
-/// braces once it fits on one line, and a trailing comma disappears when a
-/// list collapses. Refusing those aborted formatting for the entire file.
+/// where both the order and the count may legitimately change: with
+/// `reorder_imports` and `reorder_modules` on by default, rustfmt moves
+/// `use` and `mod` items past each other, a single-expression `match` arm
+/// loses its braces once it fits on one line, and a trailing comma
+/// disappears when a list collapses. Comparing the sequence rejected all of
+/// that and aborted formatting for the whole file -- over the ordinary state
+/// of any file nobody has run rustfmt on yet.
 ///
-/// Only safe because every macro-body rewrite is checked separately by
-/// `ensure_tokens_preserved` before it is folded into the file, and this
-/// pass runs rustfmt with `format_macro_bodies=false`, so rustfmt does not
-/// reach inside a macro body here.
+/// So this compares the *multiset* of significant tokens: nothing may be
+/// invented or lost, but rustfmt may hand it back in a different order. Only
+/// safe because every macro-body rewrite is checked separately, in order, by
+/// `ensure_tokens_preserved` before it is folded into the file, and this pass
+/// runs rustfmt with `format_macro_bodies=false`, so rustfmt does not reach
+/// inside a macro body here.
 fn ensure_tokens_preserved_across_rustfmt_pass(before: &str, after: &str) -> anyhow::Result<()> {
-    compare_tokens(before, after, true)
+    let census = |source: &str| -> anyhow::Result<HashMap<(String, String), usize>> {
+        let mut counts = HashMap::new();
+        for token in parser::significant_tokens(source)? {
+            // Added and removed freely as lines collapse and wrap.
+            if matches!(token.text.as_str(), "," | "{" | "}") {
+                continue;
+            }
+            *counts
+                .entry((format!("{:?}", token.kind), token.text))
+                .or_insert(0usize) += 1;
+        }
+        Ok(counts)
+    };
+    let before = census(before)?;
+    let after = census(after)?;
+    if before == after {
+        return Ok(());
+    }
+    let mut differences: Vec<String> = before
+        .iter()
+        .chain(after.iter())
+        .map(|(key, _)| key)
+        .filter(|key| before.get(*key) != after.get(*key))
+        .map(|key| {
+            format!(
+                "{} {:?} {}->{}",
+                key.0,
+                key.1,
+                before.get(key).copied().unwrap_or(0),
+                after.get(key).copied().unwrap_or(0)
+            )
+        })
+        .collect();
+    differences.sort();
+    differences.dedup();
+    differences.truncate(5);
+    anyhow::bail!(
+        "formatter changed significant Rust tokens: {}",
+        differences.join(", ")
+    );
 }
 
-fn compare_tokens(before: &str, after: &str, allow_removals: bool) -> anyhow::Result<()> {
+fn compare_tokens(before: &str, after: &str) -> anyhow::Result<()> {
     let before = parser::significant_tokens(before)?;
     let after = parser::significant_tokens(after)?;
     let mut left = 0usize;
@@ -1587,8 +1727,6 @@ fn compare_tokens(before: &str, after: &str, allow_removals: bool) -> anyhow::Re
             right += 1;
         } else if matches!(after[right].text.as_str(), "," | "{" | "}") {
             right += 1;
-        } else if allow_removals && matches!(before[left].text.as_str(), "," | "{" | "}") {
-            left += 1;
         } else {
             anyhow::bail!(
                 "formatter changed significant Rust token {left}: {:?} {:?} -> {:?} {:?}",
@@ -1604,12 +1742,7 @@ fn compare_tokens(before: &str, after: &str, allow_removals: bool) -> anyhow::Re
             .iter()
             .all(|token| matches!(token.text.as_str(), "," | "{" | "}"))
     };
-    let before_tail_ok = if allow_removals {
-        is_punctuation(&before[left..])
-    } else {
-        left == before.len()
-    };
-    if !before_tail_ok || !is_punctuation(&after[right..]) {
+    if left != before.len() || !is_punctuation(&after[right..]) {
         anyhow::bail!(
             "formatter removed or changed significant Rust tokens: {} -> {}",
             before.len(),
