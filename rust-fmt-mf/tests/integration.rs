@@ -1178,3 +1178,47 @@ fn an_attribute_keeps_its_own_line_in_a_macro_body() {
         "the attribute must be on its own line: {actual:?}"
     );
 }
+
+
+#[test]
+fn a_generic_close_is_not_glued_to_an_assignment() {
+    // `is_joint_operator` matched (">", "=") on the two texts alone, so a `>`
+    // closing a generic was read as the operator `>=` and glued to what
+    // followed. The token oracle cannot see it -- the lexer emits `Gt` and
+    // `Eq` separately either way -- so the damage was stable under
+    // reformatting and never healed itself.
+    let source = "lazy_static! {
+    static ref NAMES: Vec<String> = Vec::new();
+}
+
+pub type Alias<T> = Vec<T>;
+";
+    let once = rust_fmt_mf::format_source(source, "rustfmt", "2021", None).unwrap();
+    assert!(
+        once.contains("Vec<String> = Vec::new()"),
+        "the generic close must keep its space: {once:?}"
+    );
+    assert!(
+        once.contains("Alias<T> = Vec<T>"),
+        "same outside a macro invocation: {once:?}"
+    );
+    let twice = rust_fmt_mf::format_source(&once, "rustfmt", "2021", None).unwrap();
+    assert_eq!(twice, once, "formatting must be idempotent here");
+}
+
+#[test]
+fn a_real_greater_or_equal_stays_one_operator() {
+    // The other half of the same rule: `>=` still has to glue when the `>` is
+    // genuinely an operator, and so does `>>=`.
+    let source = "fn at_least(a: u32, b: u32) -> bool {
+    a >= b
+}
+
+fn halve(mut a: u32) -> u32 {
+    a >>= 1;
+    a
+}
+";
+    let actual = rust_fmt_mf::format_source(source, "rustfmt", "2021", None).unwrap();
+    assert_eq!(actual, source, "{actual:?}");
+}

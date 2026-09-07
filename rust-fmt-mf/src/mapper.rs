@@ -329,7 +329,16 @@ fn canonical_token_spacing_impl(source: &str, fragment_colons: bool) -> String {
         let previous_repetition = index
             .checked_sub(1)
             .is_some_and(|position| is_repetition_operator(&tokens, position));
-        let joint_operator = previous.is_some_and(|left| is_joint_operator(left, current));
+        // `>=` is an operator only when the `>` is one. A `>` that closes a
+        // generic is followed by an ordinary `=`, as in `Vec<String> = ..`,
+        // and gluing the two is invisible to the token oracle: the lexer
+        // emits `Gt` and `Eq` separately either way.
+        let generic_close_before_assign = previous == Some(">")
+            && current == "="
+            && index >= 2
+            && is_generic_angle(&tokens, index - 1);
+        let joint_operator = !generic_close_before_assign
+            && previous.is_some_and(|left| is_joint_operator(left, current));
         let generic_punctuation = is_generic_angle(&tokens, index);
         let previous_unary = index
             .checked_sub(1)

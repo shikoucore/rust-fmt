@@ -3,6 +3,20 @@ mod examples;
 use std::collections::HashMap;
 use std::fmt::Write;
 
+macro_rules! typed_alias {
+    ($name:ident) => {
+        pub type $name<T> = Vec<T>;
+    };
+}
+
+typed_alias!(Names);
+
+macro_rules! at_least {
+    ($a:expr, $b:expr) => {
+        $a >= $b
+    };
+}
+
 fn main() {
     let x = 1 + 2 * 3;
     println!("Hello, world!");
@@ -31,6 +45,8 @@ fn main() {
     let mut counts: HashMap<&str, usize> = HashMap::new();
     counts.insert("messy", 1);
     println!("{}", summarize(&counts));
+    let names: Names<u8> = Vec::new();
+    println!("{} {}", names.len(), at_least!(x, 3));
 }
 
 fn add(a: i32, b: i32) -> i32 {
